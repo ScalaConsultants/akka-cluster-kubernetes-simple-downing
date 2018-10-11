@@ -3,28 +3,29 @@ package io.scalac.akka.k8s.downing
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
+import akka.actor.{ Actor, ActorLogging, ActorSystem, Props }
 import akka.cluster.ClusterEvent._
-import akka.cluster.{Cluster, DowningProvider, Member, MemberStatus}
-import akka.stream.scaladsl.{Sink, Source}
-import akka.stream.{ActorMaterializer, Materializer}
+import akka.cluster.{ Cluster, DowningProvider, Member, MemberStatus }
+import akka.stream.scaladsl.{ Sink, Source }
+import akka.stream.{ ActorMaterializer, Materializer }
 import com.typesafe.config.Config
 import org.slf4j.LoggerFactory
 
-import scala.concurrent.duration.{Duration, FiniteDuration}
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.duration.{ Duration, FiniteDuration }
+import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Try
 
 class KubernetesServiceAwareDowningSettings(config: Config) {
   private val c = config.getConfig("akka.k8s.downing")
 
-  val apiServicePortEnvName = c.getString("api-service-port-env-name")
-  val apiServiceHostEnvName = c.getString("api-service-host-env-name")
-  val apiServiceProbeInterval = getDuration("api-service-probe-interval")
-  val apiServiceFailuresAllowed = c.getInt("api-service-failures-allowed")
-  val additionalDownRemovalMargin = getDuration("additional-down-removal-margin")
+  val apiServicePortEnvName: String               = c.getString("api-service-port-env-name")
+  val apiServiceHostEnvName: String               = c.getString("api-service-host-env-name")
+  val apiServiceProbeInterval: FiniteDuration     = getDuration("api-service-probe-interval")
+  val apiServiceFailuresAllowed: Int              = c.getInt("api-service-failures-allowed")
+  val additionalDownRemovalMargin: FiniteDuration = getDuration("additional-down-removal-margin")
 
-  private def getDuration(key: String) = Duration(c.getDuration(key, TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
+  private def getDuration(key: String) =
+    Duration(c.getDuration(key, TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
 }
 
 class KubernetesServiceAwareDowningProvider(system: ActorSystem) extends DowningProvider {
@@ -44,38 +45,39 @@ class KubernetesServiceAwareDowningProvider(system: ActorSystem) extends Downing
 
 class KubernetesServiceAwareDowning(
   cluster: Cluster,
-  settings: KubernetesServiceAwareDowningSettings)
-  (
-    implicit ex: ExecutionContext
-  ) extends Actor
-  with ActorLogging {
+  settings: KubernetesServiceAwareDowningSettings
+)(
+  implicit ex: ExecutionContext
+) extends Actor
+    with ActorLogging {
 
   /** Checks if Kubernetes Service is available by trying to open a socket. */
   private def probe(): Future[Boolean] = Future {
-    val host = sys.env.get(settings.apiServiceHostEnvName)
+    val host = sys.props
+      .get(settings.apiServiceHostEnvName)
       .filter(_.nonEmpty)
       .getOrElse(throw new RuntimeException("Can't get Kubernetes API Service Hostname"))
 
-    val port = sys.env.get(settings.apiServicePortEnvName)
+    val port = sys.props
+      .get(settings.apiServicePortEnvName)
       .flatMap(p => Try(p.toInt).toOption)
       .getOrElse(throw new RuntimeException("Can't get Kubernetes API Service Port"))
-
     Try(new Socket(host, port)).isSuccess
   }
 
-  override def preStart(): Unit = {
-    KubernetesServiceMonitor.start(
-      () => probe(),
-      settings.apiServiceProbeInterval,
-      settings.apiServiceFailuresAllowed
-    )(context.system)
-    cluster.subscribe(context.self, classOf[UnreachableMember])
-  }
+  override def preStart(): Unit =
+    cluster.subscribe(context.self, classOf[UnreachableMember], classOf[MemberJoined])
 
   implicit private val dcThanAgeOrdering: Ordering[Member] =
     Ordering.fromLessThan((a, b) => a.dataCenter < b.dataCenter || b.isOlderThan(a))
 
   def receive: Receive = {
+    case _: CurrentClusterState =>
+      KubernetesServiceMonitor.start(
+        () => probe(),
+        settings.apiServiceProbeInterval,
+        settings.apiServiceFailuresAllowed
+      )(context.system)
     case UnreachableMember(unreachable) =>
       val downingNode =
         (cluster.state.members -- cluster.state.unreachable)
@@ -98,17 +100,18 @@ class KubernetesServiceAwareDowning(
   */
 object KubernetesServiceMonitor {
 
-  val log = LoggerFactory.getLogger(this.getClass)
+  private val log = LoggerFactory.getLogger(this.getClass)
 
   def start(
     probe: () => Future[Boolean],
     probeInterval: FiniteDuration,
     failuresAllowed: Int
-  )(implicit system: ActorSystem) = {
-    implicit val mat: Materializer = ActorMaterializer()
+  )(implicit system: ActorSystem): Future[Int] = {
+    implicit val mat: Materializer    = ActorMaterializer()
     implicit val ec: ExecutionContext = system.dispatcher
 
-    Source.tick(Duration.Zero, probeInterval, ())
+    Source
+      .tick(Duration.Zero, probeInterval, ())
       .mapAsync(1)(_ => probe())
       .runWith(Sink.foldAsync(0) {
         case (_, true) =>
@@ -118,9 +121,16 @@ object KubernetesServiceMonitor {
           log.warn(s"Kubernetes API Service failed ${failures + 1} times.")
           Future.successful(failures + 1)
         case (failures, false) =>
-          log.warn(s"Kubernetes API Service failed ${failures + 1} times. Shutting down actor system.")
-          system.terminate().map(_ => 0)
+          log.warn(
+            s"Kubernetes API Service failed ${failures + 1} times. Terminating actor system."
+          )
+          system.terminate().map(_ => -1)
       })
+      .recoverWith {
+        case e: Throwable =>
+          log.error("Probe failed, this is fatal! Terminating actor system!", e)
+          system.terminate().map(_ => -1)
+      }
   }
 
 }

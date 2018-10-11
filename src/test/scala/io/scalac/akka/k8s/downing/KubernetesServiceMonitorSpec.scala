@@ -12,7 +12,7 @@ class KubernetesServiceMonitorSpec extends WordSpec
   with IntegrationPatience
   with Matchers {
 
-  s"${classOf[KubernetesServiceMonitor]}" should {
+  "KubernetesServiceMonitor" should {
     "keep using probe as long as API Service is available" in {
       implicit val system = ActorSystem()
       var counter = 0
