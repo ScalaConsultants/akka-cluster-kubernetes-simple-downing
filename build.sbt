@@ -1,22 +1,22 @@
-name := "akka-cluster-kubernetes-simple-downing"
+name := "akka-self-terminating-for-kubernetes"
 organization := "scalac.io"
 version := "1.0.0-SNAPSHOT"
 
 scalaVersion := "2.12.7"
 
-enablePlugins(MultiJvmPlugin)
-
 val Version = new {
   val akka      = "2.5.17"
+  val logback   = "1.2.3"
   val scalaTest = "3.0.5"
+  val slf4j     = "1.7.25"
 }
 
 libraryDependencies ++= Seq(
-  "com.typesafe.akka"            %% "akka-cluster"                  % Version.akka,
-  "com.lightbend.akka.discovery" %% "akka-discovery-kubernetes-api" % "0.18.0",
-  "org.slf4j"                    % "slf4j-api"                      % "1.7.25",
-  "org.scalatest"                %% "scalatest"                     % Version.scalaTest % "test",
-  "com.typesafe.akka"            %% "akka-multi-node-testkit"       % Version.akka % "test"
+  "com.typesafe.akka" %% "akka-actor"     % Version.akka,
+  "com.typesafe.akka" %% "akka-stream"    % Version.akka,
+  "org.slf4j"         % "slf4j-api"       % Version.slf4j,
+  "org.scalatest"     %% "scalatest"      % Version.scalaTest % "test",
+  "ch.qos.logback"    % "logback-classic" % Version.logback % "test"
 )
 scalacOptions ++= Seq(
   "-encoding",
@@ -28,10 +28,9 @@ scalacOptions ++= Seq(
 )
 
 testOptions += Tests.Argument("-oF")
-scalatestOptions in MultiJvm := (scalatestOptions in MultiJvm).value.map(_ + "F")
 
-jvmOptions in MultiJvm := Seq(
-  "-DKUBERNETES_SERVICE_HOST=localhost",
-  "-DKUBERNETES_SERVICE_PORT=12345"
+fork in Test := true
+envVars in Test := Map(
+  "KUBERNETES_SERVICE_HOST" -> "localhost",
+  "KUBERNETES_SERVICE_PORT" -> "12345"
 )
-configs(MultiJvm)
