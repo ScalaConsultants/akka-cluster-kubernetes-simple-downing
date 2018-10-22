@@ -1,7 +1,7 @@
 package io.scalac.akka.k8s.termination
 
 import java.net.Socket
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ Executors, TimeUnit }
 
 import akka.actor.{ ActorSystem, ExtendedActorSystem, Extension, ExtensionId, ExtensionIdProvider }
 import akka.stream.{ ActorMaterializer, Materializer }
@@ -24,9 +24,11 @@ final class KubernetesServiceAwareSelfTerminationImpl(
   system: ExtendedActorSystem
 ) extends Extension {
 
-  private val log = LoggerFactory.getLogger(classOf[KubernetesServiceAwareSelfTerminationImpl])
+  private val log                        = LoggerFactory.getLogger(classOf[KubernetesServiceAwareSelfTerminationImpl])
   private implicit val mat: Materializer = ActorMaterializer()(system)
-  private implicit val ec: ExecutionContext = ExecutionContext.Implicits.global
+  // Probe calls are executed using this context to no block global nor system dispatcher.
+  private implicit val ec: ExecutionContext =
+    ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor())
 
   /** Checks if Kubernetes Service is available by trying to open a socket. */
   private val probe: () => Future[Boolean] = {
@@ -53,8 +55,7 @@ final class KubernetesServiceAwareSelfTerminationImpl(
         )
       }
     log.info(s"Will use '$host:$port' for probing Kubernetes API Service.")
-    () =>
-      Future(Try(new Socket(host, port)).isSuccess)
+    () => Future(Try(new Socket(host, port)).isSuccess)
   }
 
   /** Completes when probe failed too many times consecutively. */
@@ -85,6 +86,10 @@ final class KubernetesServiceAwareSelfTerminationImpl(
   }
 }
 
+/**
+  * This provider requires environment variables to be set, Kubernetes should provide them
+  * in started containers. Otherwise exception will be thrown.
+  */
 object KubernetesServiceAwareSelfTermination
     extends ExtensionId[KubernetesServiceAwareSelfTerminationImpl]
     with ExtensionIdProvider {
@@ -100,11 +105,12 @@ object KubernetesServiceAwareSelfTermination
     impl
   }
 
-  override def get(system: ActorSystem): KubernetesServiceAwareSelfTerminationImpl = super.get(system)
+  override def get(system: ActorSystem): KubernetesServiceAwareSelfTerminationImpl =
+    super.get(system)
 }
 
 class KubernetesServiceAwareSelfTerminationSettings(config: Config) {
-  private val c = config.getConfig("akka.k8s.termination")
+  private val c = config.getConfig("akka.k8s.self-termination")
 
   val apiServicePortEnvName: String           = c.getString("api-service-port-env-name")
   val apiServiceHostEnvName: String           = c.getString("api-service-host-env-name")

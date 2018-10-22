@@ -32,5 +32,6 @@ testOptions += Tests.Argument("-oF")
 fork in Test := true
 envVars in Test := Map(
   "KUBERNETES_SERVICE_HOST" -> "localhost",
-  "KUBERNETES_SERVICE_PORT" -> "12345"
+  "KUBERNETES_SERVICE_PORT" -> "12345",
+  "INVALID_KUBERNETES_SERVICE_PORT" -> "not an integer"
 )
