@@ -45,3 +45,5 @@ For some local testing you need to set up `KUBERNETES_SERVICE_HOST` and `KUBERNE
 and extension keeps probing TCP port of *apiservice*. If a socket can not be created it counts as failed attempt.
 After few failed attempts *apiservice* is considered unreachable. This triggers actor system termination
 in order to not leave working node in network partition condition.
+
+Developed by [Scalac](https://scalac.io/?utm_source=scalac_github&utm_campaign=scalac1&utm_medium=web)
